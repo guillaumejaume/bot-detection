@@ -401,8 +401,8 @@ class BotDetector(nn.Module):
         Forward pass
         """
 
-        if self.topology_only:
-            g.ndata[GNN_NODE_FEAT_IN] = self.node_embeddings(g.ndata['degree'])
+        # if self.topology_only:
+        #     g.ndata[GNN_NODE_FEAT_IN] = self.node_embeddings(g.ndata['degree'])
             
         h = g.ndata[GNN_NODE_FEAT_IN]
         g = self.gnn(g, h)

@@ -34,7 +34,8 @@ class TwitterDataset(Dataset):
             self,
             data_path: str,
             load_in_ram: bool = False,
-            topology_only: bool = False
+            topology_only: bool = False,
+            with_name: bool = False
     ):
         """
         Twitter dataset constructor.
@@ -48,6 +49,8 @@ class TwitterDataset(Dataset):
         super(TwitterDataset, self).__init__()
         self.data_path = data_path
         self.load_in_ram = load_in_ram
+        self.topology_only = topology_only
+        self.with_name = with_name
         self._load_graphs()
         if topology_only and load_in_ram:
             self._set_node_degree()
@@ -128,6 +131,11 @@ class TwitterDataset(Dataset):
             idx = self.get_index(self.graph_fnames[index], g)
         g.ndata['feats'] = g.ndata['feats'].float()
         g = set_graph_on_cuda(g) if IS_CUDA else g
+
+        if self.with_name:
+            user_id = self.graph_fnames[index].split('/')[-1].split('.')[0]
+            return g, idx, label, user_id
+
         return g, idx, label
 
     def __len__(self):
@@ -147,7 +155,11 @@ def collate(batch):
     graphs = dgl.batch([example[0] for example in batch])
     node_ids = [example[1] for example in batch]
     labels = torch.LongTensor([example[2] for example in batch]).to(DEVICE)
-    return graphs, node_ids, labels
+    try:
+        user_ids = [example[3] for example in batch]
+        return graphs, node_ids, labels, user_ids
+    except:
+        return graphs, node_ids, labels
 
 
 def make_data_loader(

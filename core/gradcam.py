@@ -5,10 +5,17 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .base_explainer import BaseExplainer
-from ..utils.graph import copy_graph
 
 EPS = 10e-7
+
+
+def copy_graph(x):
+    graph_copy = dgl.DGLGraph(graph_data=x)
+    for k, v in x.ndata.items():
+        graph_copy.ndata[k] = v.clone()
+    for k, v in x.edata.items():
+        graph_copy.edata[k] = v.clone()
+    return graph_copy
 
 
 class GradCAM(object):
@@ -152,9 +159,10 @@ class GradCAM(object):
         loss.backward(retain_graph=True)
 
 
-class GraphGradCAMExplainer(BaseExplainer):
+class GraphGradCAMExplainer:
     def __init__(
         self,
+        model, 
         gnn_layer_name: List[str] = None,
         gnn_layer_ids: List[str] = None,
         **kwargs
@@ -169,7 +177,17 @@ class GraphGradCAMExplainer(BaseExplainer):
                                         Default to None. If None tries to automatically infer
                                         from the model.
         """
-        super().__init__(**kwargs)
+
+        # look for GPU
+        self.cuda = torch.cuda.is_available()
+        self.device = torch.device("cuda:0" if self.cuda else "cpu")
+
+        # set model
+        self.model = model
+        self.model.eval()
+        self.model = self.model.to(self.device)
+        self.model.zero_grad()
+
         if gnn_layer_name is None and gnn_layer_ids is None:
             all_param_names = [
                 name for name,
@@ -184,8 +202,10 @@ class GraphGradCAMExplainer(BaseExplainer):
         assert self.gnn_layer_ids is not None
         assert self.gnn_layer_name is not None
 
-    def _process(
-        self, graph: dgl.DGLGraph, class_idx: Union[None, int, List[int]] = None
+    def process(
+        self,
+        graph: dgl.DGLGraph,
+        node_idx
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Compute node importances for a single class
         Args:
@@ -197,43 +217,22 @@ class GraphGradCAMExplainer(BaseExplainer):
             node_importance (np.ndarray): Node-level importance scores.
             logits (np.ndarray): Prediction logits.
         """
-        if isinstance(class_idx, int) or class_idx is None:
-            class_idx = [class_idx]
-        node_importances, logits = self._process_all(graph, class_idx)
-        return node_importances, logits
+
+        # 1. get winning class 
+        self.extractor = self._get_extractor()
+        graph_copy = copy_graph(graph)
+        original_logits = self.model(graph_copy, node_idx)
+        class_idx = original_logits.argmax().item()
+
+        # 2. explain prediction w/ winning class 
+        node_importance = self.extractor(class_idx, original_logits, normalized=True).cpu()
+        self.extractor.clear_hooks()
+        logits = original_logits.cpu().detach().numpy()
+        node_importance = node_importance.cpu().detach().squeeze(dim=0).numpy()
+        return node_importance, logits
 
     def _get_extractor(self):
         return GradCAM(
             getattr(self.model, self.gnn_layer_name).layers, self.gnn_layer_ids
         )
-
-    def _process_all(
-        self, graph: dgl.DGLGraph, classes: List[int]
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute node importances for all classes
-        Args:
-            graph (dgl.DGLGraph): Graph to explain
-            classes (List[int]): Classes to explain
-        Returns:
-            node_importance (np.ndarray): Node-level importance scores
-            logits (np.ndarray): Prediction logits
-        """
-        graph_copy = copy_graph(graph)
-        self.extractor = self._get_extractor()
-        original_logits = self.model(graph_copy)
-        if isinstance(original_logits, tuple):
-            original_logits = original_logits[0]
-        if classes[0] is None:
-            classes = [original_logits.argmax().item()]
-        all_class_importances = list()
-        for class_idx in classes:
-            node_importance = self.extractor(
-                class_idx, original_logits, normalized=True
-            ).cpu()
-            all_class_importances.append(node_importance)
-            self.extractor.clear_hooks()
-        logits = original_logits.cpu().detach().numpy()
-        node_importances = torch.stack(all_class_importances)
-        node_importances = node_importances.cpu().detach().squeeze(dim=0).numpy()
-        return node_importances, logits
 

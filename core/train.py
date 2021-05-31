@@ -34,14 +34,6 @@ def parse_arguments():
         required=False
     )
     parser.add_argument(
-        '-conf',
-        '--config_fpath',
-        type=str,
-        help='path to the config file.',
-        default='',
-        required=False
-    )
-    parser.add_argument(
         '--in_ram',
         help='if the data should be stored in RAM.',
         action='store_true',
@@ -274,7 +266,7 @@ def main(args):
             mlflow.log_metric('best_precision_score_' + metric, test_precision_score, step=step)
 
         # compute & store weighted f1-score
-        test_recall_score = f1_score(all_test_labels, all_test_preds)
+        test_recall_score = recall_score(all_test_labels, all_test_preds)
         if args.logger == 'mlflow':
             mlflow.log_metric('best_test_recall_score_' + metric, test_recall_score, step=step)
 
